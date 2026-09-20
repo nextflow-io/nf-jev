@@ -1,0 +1,22 @@
+plugins {
+    id 'io.nextflow.nextflow-plugin' version '1.0.0-beta.15'
+}
+
+version = '0.1.0'
+
+dependencies {
+    // the all-in-one wiremock jar; exclude groovy-all so it does not clash with the Groovy runtime
+    testImplementation('org.wiremock:wiremock-standalone:3.13.2') { exclude module: 'groovy-all' }
+}
+
+nextflowPlugin {
+    nextflowVersion = '25.10.0'
+
+    provider = 'nextflow-io'
+    className = 'nextflowio.plugin.JevPlugin'
+    description = 'Calibrated judgments from TypeSafe System One as Nextflow functions'
+    extensionPoints = [
+        'nextflowio.plugin.JevExtension'
+    ]
+
+}
