@@ -1,5 +1,7 @@
 # nf-jev
 
+[![build](https://github.com/nextflow-io/nf-jev/actions/workflows/build.yml/badge.svg)](https://github.com/nextflow-io/nf-jev/actions/workflows/build.yml)
+
 > **Beta.** This plugin is early and under active development. The function names, the shape of the
 > answers and the `jev` configuration scope may all change between releases, and there is no
 > deprecation cycle yet. Pin a version, and expect to revisit pipelines that use it.
@@ -145,6 +147,12 @@ make test       # unit tests; no test makes a live API call
 make install    # install into the local Nextflow plugins dir
 make release    # publish to the Nextflow Registry
 ```
+
+CI builds and runs the unit tests on every push and pull request. It then installs the plugin and
+runs all three examples against the live API, asserting how many samples each one decided — never
+the probabilities themselves, which move slightly between runs. That job needs a `TYPESAFE_API_KEY`
+repository secret; without one it reports a notice and skips, and it does not run for pull requests
+opened from a fork, which have no access to secrets.
 
 ## License
 

@@ -1,0 +1,111 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Build and test
+        run: ./gradlew assemble test
+
+      - name: Upload the test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test
+          retention-days: 7
+
+  examples:
+    name: Examples
+    needs: test
+    runs-on: ubuntu-latest
+    # Secrets are not available to pull requests opened from a fork, so the live examples can only
+    # run for branches of this repository.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      # the minimum this plugin declares - running the examples against it proves the claim
+      NXF_VER: '25.10.0'
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Check for a credential
+        id: guard
+        run: |
+          if [ -z "$TYPESAFE_API_KEY" ]; then
+            echo "::notice::TYPESAFE_API_KEY is not configured - skipping the live examples"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Nextflow
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          curl -s https://get.nextflow.io | bash
+          sudo mv nextflow /usr/local/bin/
+          nextflow -version
+
+      - name: Install the plugin
+        if: steps.guard.outputs.run == 'true'
+        run: make install
+
+      # Each example is asserted on the SHAPE of its output - how many samples were decided - and
+      # never on the probabilities themselves, which move by a hundredth between runs and would
+      # make this suite flaky for no benefit.
+
+      - name: Example - guardrail
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          out=$(nextflow -q run examples/guardrail)
+          echo "$out"
+          n=$(printf '%s' "$out" | grep -oE 'BLOCK|REVIEW|PASS' | wc -l | tr -d ' ')
+          [ "$n" -eq 3 ] || { echo "::error::expected 3 screened reports, got $n"; exit 1; }
+
+      - name: Example - route
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          out=$(nextflow -q run examples/route)
+          echo "$out"
+          n=$(printf '%s' "$out" | grep -oE 'QC on|REJECT' | wc -l | tr -d ' ')
+          [ "$n" -eq 3 ] || { echo "::error::expected 3 routed samples, got $n"; exit 1; }
+
+      - name: Example - label-samples
+        if: steps.guard.outputs.run == 'true'
+        # this one also fetches metadata from the ENA, so a failure here may be their outage
+        run: |
+          out=$(nextflow -q run examples/label-samples)
+          echo "$out"
+          n=$(printf '%s' "$out" | grep -oE 'ACCEPT|REVIEW' | wc -l | tr -d ' ')
+          [ "$n" -eq 6 ] || { echo "::error::expected 6 labelled samples, got $n"; exit 1; }
+
+      - name: Upload the Nextflow log
+        if: failure() && steps.guard.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: nextflow-log
+          path: .nextflow.log
+          retention-days: 7
