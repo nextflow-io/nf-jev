@@ -141,6 +141,11 @@ BLOCK  R3  clinical=0.12 overclaim=0.74 identifying=0.67 severity=2.40
 
 Built from the [Nextflow plugin template](https://www.nextflow.io/docs/latest/guides/gradle-plugin.html).
 
+Copy `.env.example` to `.env` for local credentials — the Nextflow Registry token used by
+`make release`, and the `TYPESAFE_API_KEY` the examples need. `make` sources it into the environment of the
+command it runs, and `.env` is gitignored. The token is read from the environment, so it never
+appears in a command line.
+
 ```bash
 make assemble   # build
 make test       # unit tests; no test makes a live API call

@@ -2,6 +2,10 @@
 # or `export GRADLE=gradle` (useful in pixi/conda environments).
 GRADLE ?= ./gradlew
 
+# Source local, untracked settings into the environment of the command that follows.
+# Copy .env.example to .env and fill it in.
+LOAD_ENV = set -a; [ -f .env ] && . ./.env; set +a;
+
 # Build the plugin
 assemble:
 	$(GRADLE) assemble
@@ -22,4 +26,4 @@ install:
 
 # Publish the plugin
 release:
-	$(GRADLE) releasePlugin
+	$(LOAD_ENV) $(GRADLE) releasePlugin

@@ -19,4 +19,12 @@ nextflowPlugin {
         'nextflowio.plugin.JevExtension'
     ]
 
+    registry {
+        // From the environment only - `make` sources .env into it. Set here because this block
+        // outranks every other source the release task consults, so gradle.properties is never
+        // reached; and never as a command-line property, which would put the token in the
+        // process list.
+        apiKey = System.getenv('NPR_API_KEY')
+        url = System.getenv('NPR_API_URL')
+    }
 }
