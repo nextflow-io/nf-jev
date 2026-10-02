@@ -69,15 +69,15 @@ class JevClientTest extends Specification {
     }
 
     /** The bodies the stub received, parsed. */
-    private List<Map> requests() {
-        wireMockServer.findAll(postRequestedFor(urlEqualTo(PATH)))
+    private List<Map> requests(String path) {
+        wireMockServer.findAll(postRequestedFor(urlEqualTo(path)))
             .collect { new JsonSlurper().parseText(it.bodyAsString) as Map }
     }
 
-    def 'should send state and questions, and return the answers' () {
+    def 'should send state and questions through #provider, and return the answers' () {
         given:
-        wireMockServer.stubFor(post(PATH).willReturn(okJson(OK_BODY)))
-        def client = clientWith(model: 'jev-1.13.0')
+        wireMockServer.stubFor(post(path).willReturn(okJson(OK_BODY)))
+        def client = clientWith(model: model, endpoint: "http://localhost:${wireMockServer.port()}${path}")
 
         when:
         def answers = client.ask([sample_title: 'GM12878'], [is_human: [type: 'noul', instructions: 'Human?']])
@@ -89,16 +89,21 @@ class JevClientTest extends Specification {
         answers.assay.probabilities['unknown'] == 0.99
 
         and: 'the request carried the credential'
-        wireMockServer.verify(1, postRequestedFor(urlEqualTo(PATH))
+        wireMockServer.verify(1, postRequestedFor(urlEqualTo(path))
             .withHeader('Authorization', equalTo('Bearer sk-test'))
             .withHeader('Content-Type', equalTo('application/json')))
 
         and: 'and the model, the state and the questions'
-        def sent = requests()
+        def sent = requests(path)
         sent.size() == 1
-        sent[0].model == 'jev-1.13.0'
+        sent[0].model == model
         sent[0].state == [sample_title: 'GM12878']
         sent[0].questions.is_human.instructions == 'Human?'
+
+        where:
+        provider     | path                   | model
+        'TypeSafe'   | '/v1/systemone'         | 'jev-1.13.0'
+        'OpenRouter' | '/api/alpha/decisions'  | 'typesafe/jev-1.13'
     }
 
     def 'should retry a rate-limited request and then succeed' () {

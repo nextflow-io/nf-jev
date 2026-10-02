@@ -70,6 +70,22 @@ jev {
 }
 ```
 
+### OpenRouter
+
+Use the [OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request)
+with an OpenRouter key and model ID:
+
+```groovy
+jev {
+    apiKey   = System.getenv('OPENROUTER_API_KEY')         // or secrets.OPENROUTER_API_KEY
+    model    = 'typesafe/jev-1.13'
+    endpoint = 'https://openrouter.ai/api/alpha/decisions'
+}
+```
+
+Set `jev.apiKey` explicitly: the automatic environment fallback reads `TYPESAFE_API_KEY`.
+Call `jev(state, questions)` as usual; the request and answer shapes are the same.
+
 ### Caching
 
 Set `jev.cacheDir` and responses are cached, keyed on a SHA-256 of the exact request — model,
