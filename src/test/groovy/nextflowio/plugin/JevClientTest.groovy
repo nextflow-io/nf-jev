@@ -35,6 +35,7 @@ import java.nio.file.Path
 class JevClientTest extends Specification {
 
     static final String PATH = '/decisions'
+    static final String OPENROUTER_PATH = '/api/alpha/decisions'
 
     static final String OK_BODY = '''
         {"model":"jev-1.13.0",
@@ -42,6 +43,17 @@ class JevClientTest extends Specification {
                              "probabilities":{"RNA-seq":0.0,"unknown":0.99}},
                     "is_human":{"type":"noul","noul":0.98}},
          "usage":{"input_tokens":489,"output_tokens":89}}
+    '''
+
+    /** As OpenRouter answers: the TypeSafe shape plus `id`, `provider`, a dated model and a cost. */
+    static final String OPENROUTER_OK_BODY = '''
+        {"id":"gen-dec-1789738314-X5e5eKGQdvR9rblyX250",
+         "model":"typesafe/jev-1.13-20260917",
+         "provider":"TypeSafe",
+         "answers":{"is_human":{"type":"noul","noul":0.96},
+                    "assay":{"type":"choice","choice":"unknown","confidence":0.75,
+                             "probabilities":{"RNA-seq":0.16,"unknown":0.84}}},
+         "usage":{"cost":0.000019992,"input_tokens":476,"output_tokens":70}}
     '''
 
     @TempDir
@@ -63,21 +75,28 @@ class JevClientTest extends Specification {
         wireMockServer.resetAll()
     }
 
+    /** A client on the TypeSafe path: the stub is on localhost, which is treated as TypeSafe. */
     private JevClient clientWith(Map opts = [:]) {
         final endpoint = "http://localhost:${wireMockServer.port()}${PATH}"
         new JevClient(new JevConfig([endpoint: endpoint, apiKey: 'sk-test'] + opts, [:]))
     }
 
+    /** A client told it is talking to OpenRouter, pointed at the stub. */
+    private JevClient openRouterClient(Map opts = [:]) {
+        final endpoint = "http://localhost:${wireMockServer.port()}${OPENROUTER_PATH}"
+        new JevClient(new JevConfig([provider: 'openrouter', endpoint: endpoint, apiKey: 'sk-or-test'] + opts, [:]))
+    }
+
     /** The bodies the stub received, parsed. */
-    private List<Map> requests(String path) {
+    private List<Map> requests(String path = PATH) {
         wireMockServer.findAll(postRequestedFor(urlEqualTo(path)))
             .collect { new JsonSlurper().parseText(it.bodyAsString) as Map }
     }
 
-    def 'should send state and questions through #provider, and return the answers' () {
+    def 'should send state and questions, and return the answers' () {
         given:
-        wireMockServer.stubFor(post(path).willReturn(okJson(OK_BODY)))
-        def client = clientWith(model: model, endpoint: "http://localhost:${wireMockServer.port()}${path}")
+        wireMockServer.stubFor(post(PATH).willReturn(okJson(OK_BODY)))
+        def client = clientWith(model: 'jev-1.13.0')
 
         when:
         def answers = client.ask([sample_title: 'GM12878'], [is_human: [type: 'noul', instructions: 'Human?']])
@@ -89,21 +108,90 @@ class JevClientTest extends Specification {
         answers.assay.probabilities['unknown'] == 0.99
 
         and: 'the request carried the credential'
-        wireMockServer.verify(1, postRequestedFor(urlEqualTo(path))
+        wireMockServer.verify(1, postRequestedFor(urlEqualTo(PATH))
             .withHeader('Authorization', equalTo('Bearer sk-test'))
             .withHeader('Content-Type', equalTo('application/json')))
 
-        and: 'and the model, the state and the questions'
-        def sent = requests(path)
+        and: 'and the model, the state and the questions, exactly as the pipeline built them'
+        def sent = requests()
         sent.size() == 1
-        sent[0].model == model
+        sent[0].model == 'jev-1.13.0'
         sent[0].state == [sample_title: 'GM12878']
+        sent[0].questions == [is_human: [type: 'noul', instructions: 'Human?']]
+    }
+
+    def 'should give every noul the criteria the OpenRouter schema requires' () {
+        given:
+        wireMockServer.stubFor(post(OPENROUTER_PATH).willReturn(okJson(OPENROUTER_OK_BODY)))
+        def client = openRouterClient(model: 'typesafe/jev-1.13')
+        def questions = [
+            is_human: [type: 'noul', instructions: 'Human?'],
+            is_repeat: [type: 'noul', instructions: 'Seen before?', criteria: [true: 'Mentions a prior run', false: 'First sighting']],
+            assay: [type: 'choice', instructions: 'Which assay?', criteria: ['RNA-seq': 'transcriptome', unknown: 'not evidenced']],
+        ]
+
+        when:
+        def answers = client.ask([sample_title: 'GM12878'], questions)
+
+        then: 'the OpenRouter response - extra fields and all - yields the answers'
+        answers.keySet() == ['is_human', 'assay'] as Set
+        answers.is_human.noul == 0.96
+        answers.assay.probabilities['unknown'] == 0.84
+
+        and: 'the request carried the OpenRouter credential and model id'
+        wireMockServer.verify(1, postRequestedFor(urlEqualTo(OPENROUTER_PATH))
+            .withHeader('Authorization', equalTo('Bearer sk-or-test')))
+        def sent = requests(OPENROUTER_PATH)
+        sent.size() == 1
+        sent[0].model == 'typesafe/jev-1.13'
+
+        and: 'a noul built without criteria was sent with the generic true/false pair'
+        sent[0].questions.is_human.criteria == JevProvider.DEFAULT_NOUL_CRITERIA
         sent[0].questions.is_human.instructions == 'Human?'
 
+        and: 'while criteria the pipeline wrote, and other question types, went through untouched'
+        sent[0].questions.is_repeat == questions.is_repeat
+        sent[0].questions.assay == questions.assay
+
+        and: 'the pipeline\'s own question objects were not modified'
+        questions.is_human == [type: 'noul', instructions: 'Human?']
+    }
+
+    def 'should retry an OpenRouter #status and then succeed' () {
+        given:
+        wireMockServer.stubFor(post(OPENROUTER_PATH).inScenario('retry')
+            .whenScenarioStateIs(Scenario.STARTED)
+            .willReturn(aResponse().withStatus(status).withBody("{\"error\":{\"code\":${status},\"message\":\"${message}\"}}"))
+            .willSetStateTo('recovered'))
+        wireMockServer.stubFor(post(OPENROUTER_PATH).inScenario('retry')
+            .whenScenarioStateIs('recovered')
+            .willReturn(okJson(OPENROUTER_OK_BODY)))
+
+        when:
+        def answers = openRouterClient().ask('some state', [q: [type: 'noul', instructions: 'Yes?']])
+
+        then:
+        answers.is_human.noul == 0.96
+        wireMockServer.verify(2, postRequestedFor(urlEqualTo(OPENROUTER_PATH)))
+
         where:
-        provider     | path                   | model
-        'TypeSafe'   | '/v1/systemone'         | 'jev-1.13.0'
-        'OpenRouter' | '/api/alpha/decisions'  | 'typesafe/jev-1.13'
+        status | message
+        502    | 'Provider returned error'
+        503    | 'Service temporarily unavailable'
+        524    | 'Request timed out. Please try again later.'
+    }
+
+    def 'should tell a pinned model id from a floating one' () {
+        expect:
+        JevClient.isFloating(model) == floating
+
+        where:
+        model                          | floating
+        'jev-1.13.0'                   | false
+        'jev-latest'                   | true
+        'jev-preview'                  | true
+        'typesafe/jev-1.13'            | true
+        'typesafe/jev-router'          | true
     }
 
     def 'should retry a rate-limited request and then succeed' () {

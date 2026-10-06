@@ -27,10 +27,73 @@ class JevConfigTest extends Specification {
         when:
         def config = new JevConfig([:], [TYPESAFE_API_KEY: 'sk-env'])
         then:
+        config.provider == JevProvider.TYPESAFE
         config.endpoint == JevConfig.DEFAULT_ENDPOINT
         config.model == JevConfig.DEFAULT_MODEL
         config.timeout == Duration.ofSeconds(30)
         config.apiKey == 'sk-env'
+    }
+
+    def 'should select the provider by name, with its own endpoint, model and credential' () {
+        when:
+        def config = new JevConfig([provider: 'openrouter'], [TYPESAFE_API_KEY: 'sk-typesafe', OPENROUTER_API_KEY: 'sk-or'])
+        then:
+        config.provider == JevProvider.OPENROUTER
+        config.endpoint == 'https://openrouter.ai/api/alpha/decisions'
+        config.model == 'typesafe/jev-1.13'
+        config.apiKey == 'sk-or'
+    }
+
+    def 'should infer the provider from the endpoint host when none is named' () {
+        expect:
+        new JevConfig([endpoint: endpoint], [:]).provider == provider
+
+        where:
+        endpoint                                          | provider
+        'https://api.typesafe.ai/v1/systemone'            | JevProvider.TYPESAFE
+        'https://decisions.example.com/v1/systemone'      | JevProvider.TYPESAFE
+        'https://openrouter.ai/api/alpha/decisions'       | JevProvider.OPENROUTER
+        'https://OpenRouter.ai/api/alpha/decisions'       | JevProvider.OPENROUTER
+        'not a url'                                       | JevProvider.TYPESAFE
+    }
+
+    def 'should let a named provider win over the endpoint host' () {
+        when: 'a proxy in front of OpenRouter'
+        def config = new JevConfig([provider: 'openrouter', endpoint: 'https://proxy.example.com/decisions'], [OPENROUTER_API_KEY: 'sk-or'])
+        then:
+        config.provider == JevProvider.OPENROUTER
+        config.endpoint == 'https://proxy.example.com/decisions'
+        config.apiKey == 'sk-or'
+    }
+
+    def 'should reject an unknown provider' () {
+        when:
+        new JevConfig([provider: 'cloudflare'], [:])
+        then:
+        def e = thrown(AbortOperationException)
+        e.message.contains('cloudflare')
+        e.message.contains('typesafe, openrouter')
+    }
+
+    def 'should never present the TypeSafe key to OpenRouter' () {
+        given: 'the common setup - only TYPESAFE_API_KEY exported, and no OpenRouter key'
+        def config = new JevConfig([endpoint: 'https://openrouter.ai/api/alpha/decisions', apiKey: null], [TYPESAFE_API_KEY: 'sk-typesafe'])
+
+        when:
+        config.apiKey
+        then: 'the request is refused, naming the variable that is actually missing'
+        def e = thrown(AbortOperationException)
+        e.message.contains('OpenRouter')
+        e.message.contains('OPENROUTER_API_KEY')
+        !e.message.contains('TYPESAFE_API_KEY')
+    }
+
+    def 'should likewise ignore an OpenRouter key when talking to TypeSafe' () {
+        when:
+        new JevConfig([:], [OPENROUTER_API_KEY: 'sk-or']).apiKey
+        then:
+        def e = thrown(AbortOperationException)
+        e.message.contains('TYPESAFE_API_KEY')
     }
 
     def 'should prefer the config over the environment' () {
@@ -65,6 +128,7 @@ class JevConfigTest extends Specification {
         config.apiKey
         then:
         def e = thrown(AbortOperationException)
+        e.message.contains('TypeSafe')
         e.message.contains('jev.apiKey')
         e.message.contains('TYPESAFE_API_KEY')
     }
