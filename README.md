@@ -20,11 +20,11 @@ language model reports about its own confidence, which it invented.
 Four functions, nothing else:
 
 ```
-noul   (instructions)             // is this true?      -> probability
-choice (instructions, criteria)   // which one?         -> winner + distribution
-score  (instructions, levels)     // how much?          -> position + distribution
+noul   (instructions [, criteria])  // is this true?      -> probability
+choice (instructions, criteria)     // which one?         -> winner + distribution
+score  (instructions, levels)       // how much?          -> position + distribution
 
-jev    (state, questions)         // answer them all against one state, in one request
+jev    (state, questions)           // answer them all against one state, in one request
 ```
 
 See [`SPEC.md`](SPEC.md) for the design, and what it deliberately leaves out.
@@ -62,6 +62,7 @@ workflow {
 
 ```groovy
 jev {
+    provider = 'typesafe'                                // or 'openrouter', see below
     apiKey   = secrets.TYPESAFE_API_KEY                  // or $TYPESAFE_API_KEY
     model    = 'jev-latest'                              // pin a snapshot to fix a result
     endpoint = 'https://api.typesafe.ai/v1/systemone'
@@ -70,21 +71,47 @@ jev {
 }
 ```
 
+Everything but the key has a default. `provider` picks the defaults for endpoint and model and
+names the environment variable the key falls back to; it is inferred from the host of `endpoint`
+when left out, so an `openrouter.ai` endpoint alone is enough to select OpenRouter.
+
 ### OpenRouter
 
-Use the [OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request)
-with an OpenRouter key and model ID:
+Jev is also served by the
+[OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request).
+Select it with one setting:
 
 ```groovy
 jev {
-    apiKey   = System.getenv('OPENROUTER_API_KEY')         // or secrets.OPENROUTER_API_KEY
-    model    = 'typesafe/jev-1.13'
-    endpoint = 'https://openrouter.ai/api/alpha/decisions'
+    provider = 'openrouter'                              // endpoint https://openrouter.ai/api/alpha/decisions
+    apiKey   = env('OPENROUTER_API_KEY')                 // the default fallback; or secrets.OPENROUTER_API_KEY
+    model    = 'typesafe/jev-1.13'                       // the default; OpenRouter ids are namespaced
 }
 ```
 
-Set `jev.apiKey` explicitly: the automatic environment fallback reads `TYPESAFE_API_KEY`.
-Call `jev(state, questions)` as usual; the request and answer shapes are the same.
+Only `OPENROUTER_API_KEY` is read for OpenRouter and only `TYPESAFE_API_KEY` for TypeSafe, so a
+TypeSafe key is never presented to openrouter.ai because the OpenRouter one happens to be unset —
+the run stops and names the variable that is missing.
+
+Call `jev(state, questions)` as usual. The two APIs take the same request and return the same
+answers, with two differences the plugin absorbs for you:
+
+- **`noul` criteria are required.** OpenRouter's schema insists every `noul` says what a yes and
+  a no mean. A `noul(instructions)` built without them is sent with a generic `true`/`false` pair;
+  to say it yourself, use the two-argument form, which both providers accept:
+
+  ```nextflow
+  noul('Has this run been seen before?',
+       [true: 'The title or accession mentions a prior submission', false: 'Nothing points to one'])
+  ```
+
+- **More temporary errors.** OpenRouter reports 502, 503 and 524 as transient, on top of the 429
+  and 529 TypeSafe uses. All five are retried with backoff.
+
+OpenRouter's response adds `id`, `provider` and `usage.cost`, which the plugin ignores. Its `model`
+field names the dated snapshot that answered, e.g. `typesafe/jev-1.13-20260917`; the id you send,
+`typesafe/jev-1.13`, follows the newest one, so with `cacheDir` set you will see the floating-model
+warning described under [Caching](#caching).
 
 ### Caching
 
@@ -98,7 +125,10 @@ Two things to know before turning it on:
 
 - **Pin the model.** With the default `model = 'jev-latest'` the key holds a floating alias, so
   cached answers keep being replayed after the alias moves to a newer snapshot. The plugin warns
-  about this; pair `cacheDir` with `model = 'jev-1.13.0'`.
+  whenever the model id does not name a patch release — `jev-latest`, `jev-preview` and
+  OpenRouter's `typesafe/jev-1.13` all float; pair `cacheDir` with `model = 'jev-1.13.0'` on
+  TypeSafe. OpenRouter offers no pinned id yet, so there the warning stands as a reminder that a
+  cache outlives the snapshot behind it.
 - **A cache hit freezes one draw.** Repeated live calls on identical input vary a little. Caching
   makes a *run* reproducible, not the judgment — a threshold sitting exactly on a boundary will
   stop flapping for the wrong reason.

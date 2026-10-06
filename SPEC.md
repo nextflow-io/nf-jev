@@ -11,11 +11,11 @@ and gates on the returned probabilities with plain Nextflow operators.
 Four functions, nothing else:
 
 ```
-noul   (instructions)             -> question    // is this true?
-choice (instructions, criteria)   -> question    // which one?
-score  (instructions, levels)     -> question    // how much?
+noul   (instructions [, criteria])  -> question    // is this true?
+choice (instructions, criteria)     -> question    // which one?
+score  (instructions, levels)       -> question    // how much?
 
-jev    (state, questions)         -> answers     // one request, all questions, shared state
+jev    (state, questions)           -> answers     // one request, all questions, shared state
 ```
 
 ## Why a plugin, and why functions
@@ -53,6 +53,10 @@ once at the top of a script, reuse them across a whole cohort, pass them around.
 noul('The sample is derived from Homo sapiens.')
 // [type: 'noul', instructions: '...']
 
+noul('Has this run been seen before?',
+     [true: 'The title or accession mentions a prior submission', false: 'Nothing points to one'])
+// [type: 'noul', instructions: '...', criteria: [true: '...', false: '...']]
+
 choice('Which assay does this sequencing run describe?',
        ['RNA-seq' : 'transcriptome sequencing',
         'ATAC-seq': 'chromatin accessibility',
@@ -65,7 +69,9 @@ score('How well evidenced is the tissue of origin?',
 ```
 
 `criteria` for a Choice is an option → meaning map; for a Score it is an **ordered** list of
-level descriptions, lowest first. Both are passed through unchanged.
+level descriptions, lowest first; for a Noul it is optional, and says what a yes and a no mean
+under the keys `true` and `false`. All are passed through unchanged -- with one provider-specific
+exception, below.
 
 ### The call
 
@@ -99,7 +105,8 @@ distribution is — not whether the answer is correct.
 
 ```groovy
 jev {
-    apiKey   = secrets.TYPESAFE_API_KEY   // or the TYPESAFE_API_KEY environment variable
+    provider = 'typesafe'                 // or 'openrouter'; inferred from the endpoint host if unset
+    apiKey   = secrets.TYPESAFE_API_KEY   // or the provider's environment variable
     model    = 'jev-latest'               // pin a snapshot for reproducibility
     endpoint = 'https://api.typesafe.ai/v1/systemone'
     timeout  = 30                         // seconds, per request
@@ -107,14 +114,36 @@ jev {
 }
 ```
 
-`apiKey` falls back to the `TYPESAFE_API_KEY` environment variable and is required; the plugin
-fails fast at first use when it is missing.
+**On `provider`:** Jev is served by TypeSafe and by the OpenRouter Decisions API. They take the
+same request and return the same answers, but differ in host, credential, model ids, the shape a
+`noul` must take and which errors are temporary. `provider` gathers those differences in one
+place -- the `JevProvider` enum -- rather than letting `endpoint` stand in for a switch it cannot
+be: an endpoint says where to send a request, not what the other side demands of it.
+
+| | `typesafe` | `openrouter` |
+| --- | --- | --- |
+| default `endpoint` | `https://api.typesafe.ai/v1/systemone` | `https://openrouter.ai/api/alpha/decisions` |
+| key fallback | `TYPESAFE_API_KEY` | `OPENROUTER_API_KEY` |
+| default `model` | `jev-latest` | `typesafe/jev-1.13` |
+| `noul` criteria | optional | required: a generic `true`/`false` pair is filled in when absent |
+
+The fallback reads **only** the selected provider's variable. The obvious misconfiguration -- an
+OpenRouter endpoint with only `TYPESAFE_API_KEY` exported -- must not quietly present the
+TypeSafe key to openrouter.ai; it aborts, naming `OPENROUTER_API_KEY`.
+
+A Cloudflare Workers AI provider, which wraps the request in `{model, input: {state, questions}}`,
+is the next candidate for the enum; it is out of scope here.
+
+**On `apiKey`:** required; the plugin fails fast at first use when it is missing.
 
 **On `endpoint`:** configurable so a compatible endpoint can be substituted without touching a
-pipeline — a proxy, or a future API version.
+pipeline — a proxy, or a future API version. When `provider` is not set it is inferred from the
+host: `openrouter.ai` selects OpenRouter, anything else TypeSafe.
 
 **On `model`:** `jev-latest` is a floating alias. Pin the snapshot the response reports (e.g.
-`jev-1.13.0`) whenever a result needs to be reproducible across a model update.
+`jev-1.13.0`) whenever a result needs to be reproducible across a model update. OpenRouter's
+`typesafe/jev-1.13` floats too -- its responses report a dated snapshot such as
+`typesafe/jev-1.13-20260917` -- and offers no pinned id to move to.
 
 ## Caching
 
@@ -152,8 +181,9 @@ moment simply both ask — last writer wins on equivalent content, for a few tho
 
 - **The key can only carry the model you configured, not the one that answered.** With
   `model = 'jev-latest'` the key holds a floating alias, so answers keep replaying after the alias
-  moves to a new snapshot. Enabling the cache on a floating alias logs a warning; pair `cacheDir`
-  with a pinned `model = 'jev-1.13.0'`.
+  moves to a new snapshot. Enabling the cache on any model id that does not name a patch release
+  -- `jev-latest`, `jev-preview`, `typesafe/jev-1.13` -- logs a warning; pair `cacheDir` with a
+  pinned `model = 'jev-1.13.0'` where the provider offers one.
 - **Caching a probabilistic judgment freezes one draw.** Repeated live calls on identical input
   vary slightly — an `overclaim` noul measured 0.48 and 0.49 across runs. A hit makes a *run*
   reproducible; it does not make the *judgment* reproducible, and a threshold sitting on a boundary
@@ -161,13 +191,14 @@ moment simply both ask — last writer wins on equivalent content, for a few tho
 
 ## Implementation
 
-Five files under `src/main/groovy/nextflowio/plugin/`:
+Six files under `src/main/groovy/nextflowio/plugin/`:
 
 | file | role |
 | --- | --- |
 | `JevPlugin` | `BasePlugin` entry point (from the scaffold, unchanged) |
-| `JevConfig` | reads the `jev` config scope and the environment; resolves endpoint, model, key, timeout |
-| `JevClient` | one `POST` via `java.net.http.HttpClient`; JSON in, `answers` out; retries 429/529 |
+| `JevProvider` | the `typesafe` / `openrouter` enum: default endpoint and model, key variable, `noul` shaping |
+| `JevConfig` | reads the `jev` config scope and the environment; resolves provider, endpoint, model, key, timeout |
+| `JevClient` | one `POST` via `java.net.http.HttpClient`; JSON in, `answers` out; retries temporary statuses |
 | `JevCache` | content-addressed response store; atomically published, miss-on-corrupt |
 | `JevExtension` | the `@Function` surface — `noul`, `choice`, `score`, `jev` |
 
@@ -175,10 +206,11 @@ The scaffold's `JevFactory` / `JevObserver` are removed: a judgment plugin obser
 
 ### Error handling
 
-- **Missing credential** → `AbortOperationException` at first call, naming both `jev.apiKey` and
-  `TYPESAFE_API_KEY`.
-- **429 / 529** → retried up to 3 attempts with exponential backoff. These are the two statuses
-  the vendor documents as retryable.
+- **Missing credential** → `AbortOperationException` at first call, naming `jev.apiKey` and the
+  selected provider's environment variable.
+- **429 / 502 / 503 / 524 / 529** → retried up to 3 attempts with exponential backoff. TypeSafe
+  documents 429 and 529 as retryable; OpenRouter adds 502, 503 and 524. One set serves both — a
+  TypeSafe endpoint never sends the extra three, and a proxy in front of it may.
 - **Any other non-200** → `AbortOperationException` carrying the status and response body. There
   is no partial success to salvage: a decisions call either answers every question or none.
 - **Empty `questions`** → rejected before any request is made.
@@ -189,8 +221,11 @@ so concurrent `map` closures reuse the same connection pool.
 ### Testing
 
 - Question builders: shape assertions, no network.
-- `JevConfig`: precedence of config over environment, defaults, missing-key failure.
-- `JevClient`: against a stub HTTP server — success, retried 429, fatal 4xx, malformed body.
+- `JevConfig`: precedence of config over environment, defaults, provider selection and inference,
+  missing-key failure, and that one provider's key is never offered to the other.
+- `JevClient`: against a stub HTTP server — success, retried 429, fatal 4xx, malformed body; and
+  for OpenRouter what actually differs: the `noul` criteria filled in, a 502/503/524 retried, the
+  wider response parsed.
 - No test performs a live API call.
 
 ## Examples
