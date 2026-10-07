@@ -108,3 +108,44 @@ jobs:
           name: nextflow-log
           path: .nextflow.log
           retention-days: 7
+
+  release:
+    name: Release
+    needs: [test, examples]
+    runs-on: ubuntu-latest
+    # A `[release] version x.y.z` commit pushed to master publishes the version in build.gradle.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && contains(github.event.head_commit.message, '[release]')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@v6
+
+      - name: Read the version
+        id: version
+        run: echo "version=$(./gradlew -q properties | awk '/^version:/ {print $2}')" >> "$GITHUB_OUTPUT"
+
+      # Publishing first: the registry refuses a version it already has, so a re-run cannot
+      # publish twice, and a failure here leaves no tag or release behind.
+      - name: Publish to the Nextflow Registry
+        env:
+          NPR_API_KEY: ${{ secrets.NPR_API_KEY }}
+        run: ./gradlew releasePlugin
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # the notes are this version's block of changelog.txt
+          awk -v v="$VERSION" '$1 == v && $2 == "-" {on=1; next} on && /^$/ {exit} on' changelog.txt > notes.md
+          cd build/distributions
+          sha512sum "nf-jev-$VERSION.zip" > "nf-jev-$VERSION.zip.sha512"
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "nf-jev $VERSION" --notes-file ../../notes.md \
+            "nf-jev-$VERSION.zip" "nf-jev-$VERSION.zip.sha512"

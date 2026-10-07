@@ -24,4 +24,6 @@ make release    # publish to the Nextflow Registry (token from .env)
 1. Bump `version` in `build.gradle` and the `nf-jev@x.y.z` reference in `README.md`.
 2. Prepend the new version to `changelog.txt`, with one line per commit since the last release
    and no docs-only commits.
-3. Commit as `[release] version x.y.z`, tag `vx.y.z`, then run `make release`.
+3. Commit as `[release] version x.y.z` and push to master. The `release` job in
+   `.github/workflows/build.yml` then publishes to the registry and creates the `vx.y.z` tag and
+   GitHub release, with that version's changelog block as the notes.
