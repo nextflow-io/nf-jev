@@ -1,0 +1,12 @@
+# nf-jev changelog
+
+0.2.0 - 07 Oct 2026
+- chore: build: read the registry token from an untracked .env file [23cf0840]
+- feat: noul: add noul(instructions, criteria) to spell out what true and false mean (#1) [03dc60e9]
+- feat: config: add jev.provider (typesafe | openrouter), reading only that provider's API key variable, and retry 502, 503 and 524 (#1) [d99c0f6c]
+- feat: config: accept dated OpenRouter snapshot ids as pinned, and refuse a provider set together with the other provider's endpoint host (#1) [f4decd6e]
+
+0.1.0 - 20 Sep 2026
+- feat: noul, choice, score and jev functions backed by TypeSafe System One, with retries and an optional response cache [54044ad9]
+- chore: ci: build, unit test and run the examples against the live API [bc3af0b5]
+- chore: ci: run the examples on Nextflow 26.04.6 and update the actions [a57df8d7]

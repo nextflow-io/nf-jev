@@ -2,6 +2,7 @@
 .gradle
 .idea
 .nextflow*
+/notes/
 
 # Ignore Gradle build output directory
 build
