@@ -22,46 +22,33 @@ import nextflow.exception.AbortOperationException
 /**
  * The services that serve Jev, and what differs between them.
  *
- * <p>Both speak the same request and response JSON, but each has its own host, its own credential,
- * its own model ids and its own idea of a well-formed {@code noul} question. Keeping those
- * differences here means {@code jev.provider} is the single switch a pipeline flips, and the
- * credential for one service is never presented to the other.
+ * <p>Both speak the same request and response JSON, but each has its own host, its own credential
+ * and its own model ids. Keeping those differences here means {@code jev.provider} is the single
+ * switch a pipeline flips, and the credential for one service is never presented to the other.
  *
  * @author Paolo Di Tommaso <paolo.ditommaso@gmail.com>
  */
 @CompileStatic
 enum JevProvider {
 
-    /** TypeSafe's own System One endpoint. The {@code criteria} of a noul are optional. */
-    TYPESAFE('TypeSafe', 'https://api.typesafe.ai/v1/systemone', 'TYPESAFE_API_KEY', 'jev-latest', false),
+    /** TypeSafe's own System One endpoint. */
+    TYPESAFE('TypeSafe', 'api.typesafe.ai', 'https://api.typesafe.ai/v1/systemone', 'TYPESAFE_API_KEY', 'jev-latest'),
 
-    /**
-     * The OpenRouter Decisions API. Its schema requires {@code criteria} on every noul, and its
-     * model ids are namespaced, e.g. {@code typesafe/jev-1.13}.
-     */
-    OPENROUTER('OpenRouter', 'https://openrouter.ai/api/alpha/decisions', 'OPENROUTER_API_KEY', 'typesafe/jev-1.13', true)
-
-    /**
-     * What a noul's {@code true} and {@code false} mean when the pipeline said nothing more than
-     * the instructions. Sent only to a provider whose schema demands criteria, so that a request
-     * to a provider that does not stays byte-for-byte what the pipeline asked.
-     */
-    static final Map<String,String> DEFAULT_NOUL_CRITERIA = Collections.unmodifiableMap([
-        'true' : 'Yes: the statement holds for the state, or the question is answered yes.',
-        'false': 'No: the statement does not hold for the state, or the question is answered no.'] as Map<String,String>)
+    /** The OpenRouter Decisions API. Its model ids are namespaced, e.g. {@code typesafe/jev-1.13}. */
+    OPENROUTER('OpenRouter', 'openrouter.ai', 'https://openrouter.ai/api/alpha/decisions', 'OPENROUTER_API_KEY', 'typesafe/jev-1.13')
 
     final String displayName
+    final String host
     final String defaultEndpoint
     final String apiKeyVar
     final String defaultModel
-    final boolean requiresNoulCriteria
 
-    JevProvider(String displayName, String defaultEndpoint, String apiKeyVar, String defaultModel, boolean requiresNoulCriteria) {
+    JevProvider(String displayName, String host, String defaultEndpoint, String apiKeyVar, String defaultModel) {
         this.displayName = displayName
+        this.host = host
         this.defaultEndpoint = defaultEndpoint
         this.apiKeyVar = apiKeyVar
         this.defaultModel = defaultModel
-        this.requiresNoulCriteria = requiresNoulCriteria
     }
 
     /** The configuration value naming this provider, e.g. {@code openrouter}. */
@@ -83,12 +70,17 @@ enum JevProvider {
 
     /**
      * Infer the provider from the host an endpoint points at, so a pipeline that set only
-     * {@code jev.endpoint} still gets the right credential and request shape. Anything that is
-     * not openrouter.ai -- the TypeSafe API, a proxy in front of it -- is treated as TypeSafe.
+     * {@code jev.endpoint} still gets the right credential. Anything that is not a known
+     * provider's host -- a proxy, say -- is treated as TypeSafe.
      */
     static JevProvider forEndpoint(String endpoint) {
+        return ownerOf(endpoint) ?: TYPESAFE
+    }
+
+    /** The provider whose own host an endpoint points at, or {@code null} for any other host. */
+    static JevProvider ownerOf(String endpoint) {
         final host = hostOf(endpoint)
-        return host == 'openrouter.ai' || host.endsWith('.openrouter.ai') ? OPENROUTER : TYPESAFE
+        return values().find { host == it.host || host.endsWith('.' + it.host) }
     }
 
     private static String hostOf(String endpoint) {
@@ -98,23 +90,5 @@ enum JevProvider {
         catch( IllegalArgumentException e ) {
             return ''
         }
-    }
-
-    /**
-     * The questions as this provider must receive them. For a provider whose schema requires
-     * noul criteria, every noul that came without any gets {@link #DEFAULT_NOUL_CRITERIA}; the
-     * pipeline's own criteria are always passed through untouched. Returns the input itself when
-     * nothing needs to change, so the cache key of an unchanged request is unchanged too.
-     */
-    Map shape(Map questions) {
-        if( !requiresNoulCriteria )
-            return questions
-        final result = new LinkedHashMap(questions)
-        for( entry in result.entrySet() ) {
-            final question = entry.value
-            if( question instanceof Map && question.type == 'noul' && question.criteria == null )
-                entry.value = question + [criteria: DEFAULT_NOUL_CRITERIA]
-        }
-        return result
     }
 }

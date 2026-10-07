@@ -66,6 +66,26 @@ class JevConfigTest extends Specification {
         config.apiKey == 'sk-or'
     }
 
+    def 'should refuse a named provider pointed at the other provider\'s host' () {
+        when:
+        new JevConfig([provider: provider, endpoint: endpoint], [TYPESAFE_API_KEY: 'sk-typesafe', OPENROUTER_API_KEY: 'sk-or'])
+        then:
+        def e = thrown(AbortOperationException)
+        e.message.contains('Conflicting')
+        e.message.contains(endpoint)
+
+        where:
+        provider     | endpoint
+        'typesafe'   | 'https://openrouter.ai/api/alpha/decisions'
+        'openrouter' | 'https://api.typesafe.ai/v1/systemone'
+    }
+
+    def 'should accept a named provider pointed at its own host' () {
+        expect:
+        new JevConfig([provider: 'openrouter', endpoint: 'https://openrouter.ai/api/alpha/decisions'], [:]).provider == JevProvider.OPENROUTER
+        new JevConfig([provider: 'typesafe', endpoint: 'https://api.typesafe.ai/v1/systemone'], [:]).provider == JevProvider.TYPESAFE
+    }
+
     def 'should reject an unknown provider' () {
         when:
         new JevConfig([provider: 'cloudflare'], [:])

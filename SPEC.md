@@ -70,8 +70,7 @@ score('How well evidenced is the tissue of origin?',
 
 `criteria` for a Choice is an option → meaning map; for a Score it is an **ordered** list of
 level descriptions, lowest first; for a Noul it is optional, and says what a yes and a no mean
-under the keys `true` and `false`. All are passed through unchanged -- with one provider-specific
-exception, below.
+under the keys `true` and `false`. All are passed through unchanged, to either provider.
 
 ### The call
 
@@ -115,8 +114,8 @@ jev {
 ```
 
 **On `provider`:** Jev is served by TypeSafe and by the OpenRouter Decisions API. They take the
-same request and return the same answers, but differ in host, credential, model ids, the shape a
-`noul` must take and which errors are temporary. `provider` gathers those differences in one
+same request and return the same answers, but differ in host, credential, model ids and which
+errors are temporary. `provider` gathers those differences in one
 place -- the `JevProvider` enum -- rather than letting `endpoint` stand in for a switch it cannot
 be: an endpoint says where to send a request, not what the other side demands of it.
 
@@ -125,11 +124,17 @@ be: an endpoint says where to send a request, not what the other side demands of
 | default `endpoint` | `https://api.typesafe.ai/v1/systemone` | `https://openrouter.ai/api/alpha/decisions` |
 | key fallback | `TYPESAFE_API_KEY` | `OPENROUTER_API_KEY` |
 | default `model` | `jev-latest` | `typesafe/jev-1.13` |
-| `noul` criteria | optional | required: a generic `true`/`false` pair is filled in when absent |
+| pinned `model` | `jev-1.13.0` | `typesafe/jev-1.13-20260917` (dated snapshot) |
 
 The fallback reads **only** the selected provider's variable. The obvious misconfiguration -- an
 OpenRouter endpoint with only `TYPESAFE_API_KEY` exported -- must not quietly present the
-TypeSafe key to openrouter.ai; it aborts, naming `OPENROUTER_API_KEY`.
+TypeSafe key to openrouter.ai; it aborts, naming `OPENROUTER_API_KEY`. For the same reason a
+`provider` named together with an `endpoint` on the other provider's own host is a configuration
+error; any other host (a proxy) is accepted.
+
+OpenRouter's published schema marks `noul` criteria as required, but the live API answers a bare
+`noul` (verified 2026-10-07), so requests are sent exactly as built and are byte-identical across
+providers.
 
 A Cloudflare Workers AI provider, which wraps the request in `{model, input: {state, questions}}`,
 is the next candidate for the enum; it is out of scope here.
@@ -142,8 +147,8 @@ host: `openrouter.ai` selects OpenRouter, anything else TypeSafe.
 
 **On `model`:** `jev-latest` is a floating alias. Pin the snapshot the response reports (e.g.
 `jev-1.13.0`) whenever a result needs to be reproducible across a model update. OpenRouter's
-`typesafe/jev-1.13` floats too -- its responses report a dated snapshot such as
-`typesafe/jev-1.13-20260917` -- and offers no pinned id to move to.
+`typesafe/jev-1.13` floats too; pin the dated snapshot its responses report, such as
+`typesafe/jev-1.13-20260917`.
 
 ## Caching
 
@@ -181,9 +186,9 @@ moment simply both ask — last writer wins on equivalent content, for a few tho
 
 - **The key can only carry the model you configured, not the one that answered.** With
   `model = 'jev-latest'` the key holds a floating alias, so answers keep replaying after the alias
-  moves to a new snapshot. Enabling the cache on any model id that does not name a patch release
+  moves to a new snapshot. Enabling the cache on any model id that does not name a fixed snapshot
   -- `jev-latest`, `jev-preview`, `typesafe/jev-1.13` -- logs a warning; pair `cacheDir` with a
-  pinned `model = 'jev-1.13.0'` where the provider offers one.
+  pinned `model = 'jev-1.13.0'`, or `'typesafe/jev-1.13-20260917'` on OpenRouter.
 - **Caching a probabilistic judgment freezes one draw.** Repeated live calls on identical input
   vary slightly — an `overclaim` noul measured 0.48 and 0.49 across runs. A hit makes a *run*
   reproducible; it does not make the *judgment* reproducible, and a threshold sitting on a boundary
@@ -196,7 +201,7 @@ Six files under `src/main/groovy/nextflowio/plugin/`:
 | file | role |
 | --- | --- |
 | `JevPlugin` | `BasePlugin` entry point (from the scaffold, unchanged) |
-| `JevProvider` | the `typesafe` / `openrouter` enum: default endpoint and model, key variable, `noul` shaping |
+| `JevProvider` | the `typesafe` / `openrouter` enum: host, default endpoint and model, key variable |
 | `JevConfig` | reads the `jev` config scope and the environment; resolves provider, endpoint, model, key, timeout |
 | `JevClient` | one `POST` via `java.net.http.HttpClient`; JSON in, `answers` out; retries temporary statuses |
 | `JevCache` | content-addressed response store; atomically published, miss-on-corrupt |
@@ -222,10 +227,11 @@ so concurrent `map` closures reuse the same connection pool.
 
 - Question builders: shape assertions, no network.
 - `JevConfig`: precedence of config over environment, defaults, provider selection and inference,
-  missing-key failure, and that one provider's key is never offered to the other.
+  missing-key failure, conflicting provider/endpoint, and that one provider's key is never offered
+  to the other.
 - `JevClient`: against a stub HTTP server — success, retried 429, fatal 4xx, malformed body; and
-  for OpenRouter what actually differs: the `noul` criteria filled in, a 502/503/524 retried, the
-  wider response parsed.
+  for OpenRouter what actually differs: its credential and model id, questions sent untouched, a
+  502/503/524 retried, the wider response parsed; and pinned vs floating model ids.
 - No test performs a live API call.
 
 ## Examples

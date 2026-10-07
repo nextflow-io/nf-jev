@@ -120,7 +120,7 @@ class JevClientTest extends Specification {
         sent[0].questions == [is_human: [type: 'noul', instructions: 'Human?']]
     }
 
-    def 'should give every noul the criteria the OpenRouter schema requires' () {
+    def 'should send OpenRouter the questions exactly as the pipeline built them' () {
         given:
         wireMockServer.stubFor(post(OPENROUTER_PATH).willReturn(okJson(OPENROUTER_OK_BODY)))
         def client = openRouterClient(model: 'typesafe/jev-1.13')
@@ -145,16 +145,8 @@ class JevClientTest extends Specification {
         sent.size() == 1
         sent[0].model == 'typesafe/jev-1.13'
 
-        and: 'a noul built without criteria was sent with the generic true/false pair'
-        sent[0].questions.is_human.criteria == JevProvider.DEFAULT_NOUL_CRITERIA
-        sent[0].questions.is_human.instructions == 'Human?'
-
-        and: 'while criteria the pipeline wrote, and other question types, went through untouched'
-        sent[0].questions.is_repeat == questions.is_repeat
-        sent[0].questions.assay == questions.assay
-
-        and: 'the pipeline\'s own question objects were not modified'
-        questions.is_human == [type: 'noul', instructions: 'Human?']
+        and: 'a bare noul, a noul with criteria and a choice all went through untouched'
+        sent[0].questions == questions
     }
 
     def 'should retry an OpenRouter #status and then succeed' () {
@@ -188,6 +180,7 @@ class JevClientTest extends Specification {
         where:
         model                          | floating
         'jev-1.13.0'                   | false
+        'typesafe/jev-1.13-20260917'   | false
         'jev-latest'                   | true
         'jev-preview'                  | true
         'typesafe/jev-1.13'            | true

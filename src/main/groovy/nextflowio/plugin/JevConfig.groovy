@@ -27,7 +27,8 @@ import nextflow.exception.AbortOperationException
  * <p>The provider comes from {@code jev.provider}, or failing that from the host of
  * {@code jev.endpoint}, and decides the defaults and -- crucially -- which environment variable
  * the credential falls back to. Only that provider's variable is ever read, so a TypeSafe key
- * cannot be presented to openrouter.ai merely because an OpenRouter key was not set.
+ * cannot be presented to openrouter.ai merely because an OpenRouter key was not set. A provider
+ * named together with an endpoint on the other provider's own host is refused for the same reason.
  *
  * <p>The credential is resolved eagerly but validated lazily: a pipeline that enables the plugin
  * without ever asking a question must not fail for want of a key it never uses.
@@ -64,8 +65,14 @@ class JevConfig {
     }
 
     private static JevProvider resolveProvider(Map config) {
-        if( config.provider )
-            return JevProvider.fromConfig(config.provider)
+        if( config.provider ) {
+            final named = JevProvider.fromConfig(config.provider)
+            // a proxy host is fine, but another provider's own host would get this provider's key
+            final owner = config.endpoint ? JevProvider.ownerOf(config.endpoint.toString()) : null
+            if( owner != null && owner != named )
+                throw new AbortOperationException("Conflicting Jev settings - `jev.provider` is `${named.configName}` but `jev.endpoint` points at ${owner.displayName} (${config.endpoint}); remove one of them")
+            return named
+        }
         if( config.endpoint )
             return JevProvider.forEndpoint(config.endpoint.toString())
         return DEFAULT_PROVIDER

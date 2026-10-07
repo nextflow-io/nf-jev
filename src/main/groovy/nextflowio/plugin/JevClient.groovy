@@ -37,8 +37,8 @@ import nextflow.exception.AbortOperationException
  * holds no conversation, so a request either answers every question or fails outright -- there is
  * no partial result to salvage and no turn to retry.
  *
- * <p>What differs between the providers -- the host, the credential, the shape a noul must take
- * -- lives in {@link JevProvider}; the HTTP exchange here is the same for both. The endpoint stays
+ * <p>What differs between the providers -- the host, the credential, the model ids -- lives in
+ * {@link JevProvider}; the request and the HTTP exchange here are the same for both. The endpoint stays
  * configurable on top of that, so a proxy or a future API version can be substituted without
  * touching a pipeline.
  *
@@ -59,11 +59,12 @@ class JevClient {
     private static final long BACKOFF_MILLIS = 250
 
     /**
-     * A model id that names a patch release, e.g. {@code jev-1.13.0}. Anything else -- the
+     * A model id that names a fixed snapshot: a patch release on TypeSafe, e.g. {@code jev-1.13.0},
+     * or a dated one on OpenRouter, e.g. {@code typesafe/jev-1.13-20260917}. Anything else -- the
      * {@code jev-latest} and {@code jev-preview} aliases, or OpenRouter's {@code typesafe/jev-1.13}
      * -- follows the newest build of a line, so what answers it can change under a cache.
      */
-    private static final Pattern PINNED_MODEL = ~/.*\d+\.\d+\.\d+$/
+    private static final Pattern PINNED_MODEL = ~/.*(\d+\.\d+\.\d+|-\d{8})$/
 
     private final JevConfig config
     private final HttpClient httpClient
@@ -76,7 +77,7 @@ class JevClient {
             .connectTimeout(Duration.ofSeconds(10))
             .build()
         if( cache != null && isFloating(config.model) )
-            log.warn "Jev caching is enabled with the floating model id `${config.model}` - cached answers will keep being replayed after it moves to a newer snapshot; pin `jev.model` to a release such as `jev-1.13.0` where the provider offers one"
+            log.warn "Jev caching is enabled with the floating model id `${config.model}` - cached answers will keep being replayed after it moves to a newer snapshot; pin `jev.model` to the snapshot the response reports, such as `jev-1.13.0` on TypeSafe or `typesafe/jev-1.13-20260917` on OpenRouter"
     }
 
     /** Whether a model id follows the newest build rather than naming a fixed release. */
@@ -96,7 +97,7 @@ class JevClient {
         if( !questions )
             throw new AbortOperationException("At least one question is required to call Jev")
 
-        final payload = JsonOutput.toJson([model: config.model, state: state, questions: config.provider.shape(questions)])
+        final payload = JsonOutput.toJson([model: config.model, state: state, questions: questions])
 
         // A cache entry that will not parse, or that carries no answers, is a miss and nothing
         // worse: the run re-asks the question. Only a LIVE response that fails this way is an error.

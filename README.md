@@ -91,27 +91,23 @@ jev {
 
 Only `OPENROUTER_API_KEY` is read for OpenRouter and only `TYPESAFE_API_KEY` for TypeSafe, so a
 TypeSafe key is never presented to openrouter.ai because the OpenRouter one happens to be unset —
-the run stops and names the variable that is missing.
+the run stops and names the variable that is missing. Naming one provider while `endpoint`
+points at the other's host (say `provider = 'typesafe'` with an `openrouter.ai` endpoint) is
+refused outright; a proxy on any other host is fine.
 
-Call `jev(state, questions)` as usual. The two APIs take the same request and return the same
-answers, with two differences the plugin absorbs for you:
+Call `jev(state, questions)` as usual: both APIs take the same request and return the same
+answers. OpenRouter reports 502, 503 and 524 as transient on top of the 429 and 529 TypeSafe
+uses; all five are retried with backoff. Its response adds `id`, `provider` and `usage.cost`,
+which the plugin ignores, and its `model` field names the dated snapshot that answered, e.g.
+`typesafe/jev-1.13-20260917`. That dated id can be sent as `model` to pin it — see
+[Caching](#caching).
 
-- **`noul` criteria are required.** OpenRouter's schema insists every `noul` says what a yes and
-  a no mean. A `noul(instructions)` built without them is sent with a generic `true`/`false` pair;
-  to say it yourself, use the two-argument form, which both providers accept:
+A `noul` can spell out what a yes and a no mean with the two-argument form, on either provider:
 
-  ```nextflow
-  noul('Has this run been seen before?',
-       [true: 'The title or accession mentions a prior submission', false: 'Nothing points to one'])
-  ```
-
-- **More temporary errors.** OpenRouter reports 502, 503 and 524 as transient, on top of the 429
-  and 529 TypeSafe uses. All five are retried with backoff.
-
-OpenRouter's response adds `id`, `provider` and `usage.cost`, which the plugin ignores. Its `model`
-field names the dated snapshot that answered, e.g. `typesafe/jev-1.13-20260917`; the id you send,
-`typesafe/jev-1.13`, follows the newest one, so with `cacheDir` set you will see the floating-model
-warning described under [Caching](#caching).
+```nextflow
+noul('Has this run been seen before?',
+     [true: 'The title or accession mentions a prior submission', false: 'Nothing points to one'])
+```
 
 ### Caching
 
@@ -125,10 +121,9 @@ Two things to know before turning it on:
 
 - **Pin the model.** With the default `model = 'jev-latest'` the key holds a floating alias, so
   cached answers keep being replayed after the alias moves to a newer snapshot. The plugin warns
-  whenever the model id does not name a patch release — `jev-latest`, `jev-preview` and
-  OpenRouter's `typesafe/jev-1.13` all float; pair `cacheDir` with `model = 'jev-1.13.0'` on
-  TypeSafe. OpenRouter offers no pinned id yet, so there the warning stands as a reminder that a
-  cache outlives the snapshot behind it.
+  whenever the model id does not name a fixed snapshot — `jev-latest`, `jev-preview` and
+  OpenRouter's `typesafe/jev-1.13` all float. Pair `cacheDir` with `model = 'jev-1.13.0'` on
+  TypeSafe, or a dated id such as `model = 'typesafe/jev-1.13-20260917'` on OpenRouter.
 - **A cache hit freezes one draw.** Repeated live calls on identical input vary a little. Caching
   makes a *run* reproducible, not the judgment — a threshold sitting exactly on a boundary will
   stop flapping for the wrong reason.
