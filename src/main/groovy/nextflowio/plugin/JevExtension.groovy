@@ -58,6 +58,21 @@ class JevExtension extends PluginExtensionPoint {
     }
 
     /**
+     * A yes/no judgment with the two outcomes spelled out, which sharpens a question whose
+     * boundary is not obvious from the instructions alone.
+     *
+     * @param instructions the statement to evaluate
+     * @param criteria     what a yes and a no mean, under the keys {@code true} and {@code false}
+     */
+    @Function
+    Map noul(String instructions, Map criteria) {
+        requireText(instructions, 'noul')
+        if( !criteria || !criteria.containsKey('true') || !criteria.containsKey('false') )
+            throw new AbortOperationException("The criteria of a noul question need a `true` and a `false` entry - got ${criteria?.keySet() ?: []}")
+        return [type: 'noul', instructions: instructions, criteria: criteria]
+    }
+
+    /**
      * A selection from a closed set of options. The answer carries the winner plus the
      * distribution over every option, so code can gate on how clear the win was.
      *

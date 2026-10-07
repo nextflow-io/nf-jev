@@ -20,6 +20,7 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.util.regex.Pattern
 
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
@@ -28,7 +29,7 @@ import groovy.util.logging.Slf4j
 import nextflow.exception.AbortOperationException
 
 /**
- * Client for the TypeSafe System One decisions endpoint.
+ * Client for a Jev decisions endpoint -- TypeSafe's own, or OpenRouter's.
  *
  * <p>One request carries the shared {@code state} plus a map of typed questions. Every question is
  * evaluated against that same state, in parallel and independently of the others, which is what
@@ -36,8 +37,10 @@ import nextflow.exception.AbortOperationException
  * holds no conversation, so a request either answers every question or fails outright -- there is
  * no partial result to salvage and no turn to retry.
  *
- * <p>The endpoint is configurable, so a compatible one can be substituted -- a proxy, or a future
- * API version -- without touching a pipeline.
+ * <p>What differs between the providers -- the host, the credential, the model ids -- lives in
+ * {@link JevProvider}; the request and the HTTP exchange here are the same for both. The endpoint stays
+ * configurable on top of that, so a proxy or a future API version can be substituted without
+ * touching a pipeline.
  *
  * @author Paolo Di Tommaso <paolo.ditommaso@gmail.com>
  */
@@ -45,13 +48,23 @@ import nextflow.exception.AbortOperationException
 @CompileStatic
 class JevClient {
 
-    /** The statuses the vendor documents as retryable: rate limited, and overloaded. */
-    private static final Set<Integer> RETRYABLE = Set.of(429, 529)
+    /**
+     * The statuses documented as temporary, and so worth a retry. TypeSafe documents 429 (rate
+     * limited) and 529 (overloaded); OpenRouter adds 502 (upstream error), 503 (unavailable) and
+     * 524 (upstream timeout). One set serves both: a TypeSafe endpoint never sends the extra three,
+     * and a proxy in front of it may.
+     */
+    static final Set<Integer> RETRYABLE = Set.of(429, 502, 503, 524, 529)
     private static final int MAX_ATTEMPTS = 3
     private static final long BACKOFF_MILLIS = 250
 
-    /** Model ids that follow the newest build rather than naming a fixed one. */
-    private static final Set<String> FLOATING_ALIASES = Set.of('jev-latest', 'jev-preview')
+    /**
+     * A model id that names a fixed snapshot: a patch release on TypeSafe, e.g. {@code jev-1.13.0},
+     * or a dated one on OpenRouter, e.g. {@code typesafe/jev-1.13-20260917}. Anything else -- the
+     * {@code jev-latest} and {@code jev-preview} aliases, or OpenRouter's {@code typesafe/jev-1.13}
+     * -- follows the newest build of a line, so what answers it can change under a cache.
+     */
+    private static final Pattern PINNED_MODEL = ~/.*(\d+\.\d+\.\d+|-\d{8})$/
 
     private final JevConfig config
     private final HttpClient httpClient
@@ -63,8 +76,13 @@ class JevClient {
         this.httpClient = HttpClient.newBuilder()
             .connectTimeout(Duration.ofSeconds(10))
             .build()
-        if( cache != null && FLOATING_ALIASES.contains(config.model) )
-            log.warn "Jev caching is enabled with the floating model alias `${config.model}` - cached answers will keep being replayed after the alias moves to a newer snapshot; pin `jev.model` to a version such as `jev-1.13.0`"
+        if( cache != null && isFloating(config.model) )
+            log.warn "Jev caching is enabled with the floating model id `${config.model}` - cached answers will keep being replayed after it moves to a newer snapshot; pin `jev.model` to the snapshot the response reports, such as `jev-1.13.0` on TypeSafe or `typesafe/jev-1.13-20260917` on OpenRouter"
+    }
+
+    /** Whether a model id follows the newest build rather than naming a fixed release. */
+    static boolean isFloating(String model) {
+        return !PINNED_MODEL.matcher(model).matches()
     }
 
     /**

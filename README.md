@@ -20,11 +20,11 @@ language model reports about its own confidence, which it invented.
 Four functions, nothing else:
 
 ```
-noul   (instructions)             // is this true?      -> probability
-choice (instructions, criteria)   // which one?         -> winner + distribution
-score  (instructions, levels)     // how much?          -> position + distribution
+noul   (instructions [, criteria])  // is this true?      -> probability
+choice (instructions, criteria)     // which one?         -> winner + distribution
+score  (instructions, levels)       // how much?          -> position + distribution
 
-jev    (state, questions)         // answer them all against one state, in one request
+jev    (state, questions)           // answer them all against one state, in one request
 ```
 
 See [`SPEC.md`](SPEC.md) for the design, and what it deliberately leaves out.
@@ -62,12 +62,51 @@ workflow {
 
 ```groovy
 jev {
+    provider = 'typesafe'                                // or 'openrouter', see below
     apiKey   = secrets.TYPESAFE_API_KEY                  // or $TYPESAFE_API_KEY
     model    = 'jev-latest'                              // pin a snapshot to fix a result
     endpoint = 'https://api.typesafe.ai/v1/systemone'
     timeout  = 30                                        // seconds, per request
     cacheDir = "$projectDir/.jev-cache"                  // unset = no caching
 }
+```
+
+Everything but the key has a default. `provider` picks the defaults for endpoint and model and
+names the environment variable the key falls back to; it is inferred from the host of `endpoint`
+when left out, so an `openrouter.ai` endpoint alone is enough to select OpenRouter.
+
+### OpenRouter
+
+Jev is also served by the
+[OpenRouter Decisions API](https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request).
+Select it with one setting:
+
+```groovy
+jev {
+    provider = 'openrouter'                              // endpoint https://openrouter.ai/api/alpha/decisions
+    apiKey   = env('OPENROUTER_API_KEY')                 // the default fallback; or secrets.OPENROUTER_API_KEY
+    model    = 'typesafe/jev-1.13'                       // the default; OpenRouter ids are namespaced
+}
+```
+
+Only `OPENROUTER_API_KEY` is read for OpenRouter and only `TYPESAFE_API_KEY` for TypeSafe, so a
+TypeSafe key is never presented to openrouter.ai because the OpenRouter one happens to be unset —
+the run stops and names the variable that is missing. Naming one provider while `endpoint`
+points at the other's host (say `provider = 'typesafe'` with an `openrouter.ai` endpoint) is
+refused outright; a proxy on any other host is fine.
+
+Call `jev(state, questions)` as usual: both APIs take the same request and return the same
+answers. OpenRouter reports 502, 503 and 524 as transient on top of the 429 and 529 TypeSafe
+uses; all five are retried with backoff. Its response adds `id`, `provider` and `usage.cost`,
+which the plugin ignores, and its `model` field names the dated snapshot that answered, e.g.
+`typesafe/jev-1.13-20260917`. That dated id can be sent as `model` to pin it — see
+[Caching](#caching).
+
+A `noul` can spell out what a yes and a no mean with the two-argument form, on either provider:
+
+```nextflow
+noul('Has this run been seen before?',
+     [true: 'The title or accession mentions a prior submission', false: 'Nothing points to one'])
 ```
 
 ### Caching
@@ -82,7 +121,9 @@ Two things to know before turning it on:
 
 - **Pin the model.** With the default `model = 'jev-latest'` the key holds a floating alias, so
   cached answers keep being replayed after the alias moves to a newer snapshot. The plugin warns
-  about this; pair `cacheDir` with `model = 'jev-1.13.0'`.
+  whenever the model id does not name a fixed snapshot — `jev-latest`, `jev-preview` and
+  OpenRouter's `typesafe/jev-1.13` all float. Pair `cacheDir` with `model = 'jev-1.13.0'` on
+  TypeSafe, or a dated id such as `model = 'typesafe/jev-1.13-20260917'` on OpenRouter.
 - **A cache hit freezes one draw.** Repeated live calls on identical input vary a little. Caching
   makes a *run* reproducible, not the judgment — a threshold sitting exactly on a boundary will
   stop flapping for the wrong reason.

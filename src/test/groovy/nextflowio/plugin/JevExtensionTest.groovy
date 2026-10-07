@@ -28,6 +28,25 @@ class JevExtensionTest extends Specification {
         ext.noul('The sample is human.') == [type: 'noul', instructions: 'The sample is human.']
     }
 
+    def 'should build a noul question carrying its true and false criteria' () {
+        when:
+        def q = ext.noul('Has the customer contacted support before?', [true: 'Mentions a prior attempt', false: 'No sign of previous contact'])
+        then:
+        q == [type: 'noul', instructions: 'Has the customer contacted support before?',
+              criteria: [true: 'Mentions a prior attempt', false: 'No sign of previous contact']]
+    }
+
+    def 'should reject noul criteria missing either outcome' () {
+        when:
+        ext.noul('Human?', criteria)
+        then:
+        def e = thrown(AbortOperationException)
+        e.message.contains('`true` and a `false`')
+
+        where:
+        criteria << [[:], [true: 'yes'], [yes: 'yes', no: 'no']]
+    }
+
     def 'should build a choice question carrying its criteria' () {
         when:
         def q = ext.choice('Which assay?', ['RNA-seq': 'transcriptome', 'unknown': 'not evidenced'])

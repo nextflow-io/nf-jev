@@ -24,6 +24,12 @@ import nextflow.exception.AbortOperationException
 /**
  * Settings of the {@code jev} configuration scope, with environment fallback.
  *
+ * <p>The provider comes from {@code jev.provider}, or failing that from the host of
+ * {@code jev.endpoint}, and decides the defaults and -- crucially -- which environment variable
+ * the credential falls back to. Only that provider's variable is ever read, so a TypeSafe key
+ * cannot be presented to openrouter.ai merely because an OpenRouter key was not set. A provider
+ * named together with an endpoint on the other provider's own host is refused for the same reason.
+ *
  * <p>The credential is resolved eagerly but validated lazily: a pipeline that enables the plugin
  * without ever asking a question must not fail for want of a key it never uses.
  *
@@ -32,14 +38,14 @@ import nextflow.exception.AbortOperationException
 @CompileStatic
 class JevConfig {
 
-    static final String DEFAULT_ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
-    static final String DEFAULT_MODEL = 'jev-latest'
+    static final JevProvider DEFAULT_PROVIDER = JevProvider.TYPESAFE
+    static final String DEFAULT_ENDPOINT = DEFAULT_PROVIDER.defaultEndpoint
+    static final String DEFAULT_MODEL = DEFAULT_PROVIDER.defaultModel
     static final int DEFAULT_TIMEOUT_SECONDS = 30
-
-    static final String API_KEY_VAR = 'TYPESAFE_API_KEY'
 
     private final String apiKey
 
+    final JevProvider provider
     final String endpoint
     final String model
     final Duration timeout
@@ -50,11 +56,26 @@ class JevConfig {
     JevConfig(Map opts, Map<String,String> env) {
         final config = opts ?: Collections.emptyMap()
         final sysEnv = env ?: Collections.<String,String>emptyMap()
-        this.endpoint = (config.endpoint ?: DEFAULT_ENDPOINT).toString()
-        this.model = (config.model ?: DEFAULT_MODEL).toString()
+        this.provider = resolveProvider(config)
+        this.endpoint = (config.endpoint ?: provider.defaultEndpoint).toString()
+        this.model = (config.model ?: provider.defaultModel).toString()
         this.timeout = Duration.ofSeconds((config.timeout ?: DEFAULT_TIMEOUT_SECONDS) as long)
-        this.apiKey = (config.apiKey ?: sysEnv.get(API_KEY_VAR))?.toString()
+        this.apiKey = (config.apiKey ?: sysEnv.get(provider.apiKeyVar))?.toString()
         this.cacheDir = config.cacheDir?.toString() ?: null
+    }
+
+    private static JevProvider resolveProvider(Map config) {
+        if( config.provider ) {
+            final named = JevProvider.fromConfig(config.provider)
+            // a proxy host is fine, but another provider's own host would get this provider's key
+            final owner = config.endpoint ? JevProvider.ownerOf(config.endpoint.toString()) : null
+            if( owner != null && owner != named )
+                throw new AbortOperationException("Conflicting Jev settings - `jev.provider` is `${named.configName}` but `jev.endpoint` points at ${owner.displayName} (${config.endpoint}); remove one of them")
+            return named
+        }
+        if( config.endpoint )
+            return JevProvider.forEndpoint(config.endpoint.toString())
+        return DEFAULT_PROVIDER
     }
 
     /**
@@ -63,7 +84,7 @@ class JevConfig {
      */
     String getApiKey() {
         if( !apiKey )
-            throw new AbortOperationException("Missing TypeSafe credential - set `jev.apiKey` in the Nextflow configuration, or the ${API_KEY_VAR} environment variable")
+            throw new AbortOperationException("Missing ${provider.displayName} credential - set `jev.apiKey` in the Nextflow configuration, or the ${provider.apiKeyVar} environment variable")
         return apiKey
     }
 }
