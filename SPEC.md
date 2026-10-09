@@ -196,11 +196,12 @@ moment simply both ask — last writer wins on equivalent content, for a few tho
 
 ## Implementation
 
-Six files under `src/main/groovy/nextflowio/plugin/`:
+Seven files under `src/main/groovy/nextflowio/plugin/`:
 
 | file | role |
 | --- | --- |
 | `JevPlugin` | `BasePlugin` entry point (from the scaffold, unchanged) |
+| `JevScope` | the `jev` config scope Nextflow recognizes (`@ScopeName`, `@ConfigOption`) |
 | `JevProvider` | the `typesafe` / `openrouter` enum: host, default endpoint and model, key variable |
 | `JevConfig` | reads the `jev` config scope and the environment; resolves provider, endpoint, model, key, timeout |
 | `JevClient` | one `POST` via `java.net.http.HttpClient`; JSON in, `answers` out; retries temporary statuses |

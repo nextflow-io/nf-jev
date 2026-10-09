@@ -24,6 +24,10 @@ import nextflow.exception.AbortOperationException
 /**
  * Settings of the {@code jev} configuration scope, with environment fallback.
  *
+ * <p>Nextflow learns the option names from {@link JevScope}. This class is what the plugin
+ * reads: it resolves the provider, applies that provider's defaults, and falls back to the
+ * matching environment variable for the credential.
+ *
  * <p>The provider comes from {@code jev.provider}, or failing that from the host of
  * {@code jev.endpoint}, and decides the defaults and -- crucially -- which environment variable
  * the credential falls back to. Only that provider's variable is ever read, so a TypeSafe key

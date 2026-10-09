@@ -16,7 +16,8 @@ nextflowPlugin {
     className = 'nextflowio.plugin.JevPlugin'
     description = 'Calibrated judgments from TypeSafe System One as Nextflow functions'
     extensionPoints = [
-        'nextflowio.plugin.JevExtension'
+        'nextflowio.plugin.JevExtension',
+        'nextflowio.plugin.JevScope'
     ]
 
     registry {
