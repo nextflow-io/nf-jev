@@ -6,7 +6,8 @@ Nextflow plugin exposing TypeSafe System One (Jev) judgments as the functions `n
 ## Layout
 
 - `src/main/groovy/nextflowio/plugin/`: plugin sources (`JevExtension` holds the functions,
-  `JevClient` the HTTP call, `JevConfig` and `JevProvider` the `jev` config scope)
+  `JevClient` the HTTP call, `JevScope` the declared `jev` config scope, `JevConfig` and
+  `JevProvider` the resolution of it)
 - `src/test/groovy/`: Spock tests; none make a live API call
 - `examples/`: pipelines that CI runs against the live API
 
