@@ -18,6 +18,8 @@ package nextflowio.plugin
 
 import java.time.Duration
 
+import groovy.json.JsonSlurper
+import nextflow.config.spec.ConfigOption
 import nextflow.exception.AbortOperationException
 import spock.lang.Specification
 
@@ -151,5 +153,33 @@ class JevConfigTest extends Specification {
         e.message.contains('TypeSafe')
         e.message.contains('jev.apiKey')
         e.message.contains('TYPESAFE_API_KEY')
+    }
+
+    def 'should publish the jev scope in the generated plugin spec' () {
+        given:
+        def url = JevConfig.classLoader.getResource('META-INF/spec.json')
+        assert url != null : 'META-INF/spec.json is missing; JevConfig is not an extension point'
+        def spec = new JsonSlurper().parse(url)
+        def scope = spec.definitions.find { it.type == 'ConfigScope' && it.spec?.name == 'jev' }
+
+        expect:
+        scope != null
+        scope.spec.children.collect { it.spec.name } as Set ==
+            ['provider', 'apiKey', 'model', 'endpoint', 'timeout', 'cacheDir'] as Set
+
+        and: 'the published types are the fields the plugin reads'
+        def types = scope.spec.children.collectEntries { [it.spec.name, it.spec.type] }
+        types.provider == 'JevProvider'
+        types.apiKey == 'String'
+        types.model == 'String'
+        types.endpoint == 'String'
+        types.timeout == 'Duration'
+        types.cacheDir == 'String'
+
+        and: 'users write a name and a number of seconds; the fields stay an enum and java.time.Duration'
+        JevConfig.getDeclaredField('provider').getAnnotation(ConfigOption).types() as List == [String]
+        JevConfig.getDeclaredField('timeout').type == Duration
+        JevConfig.getDeclaredField('timeout').getAnnotation(ConfigOption).types() as List == [Integer]
+        !scope.spec.children.any { it.spec.description?.contains('jev-1.13') }
     }
 }
