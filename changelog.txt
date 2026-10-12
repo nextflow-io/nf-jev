@@ -1,5 +1,9 @@
 # nf-jev changelog
 
+0.2.1 - 12 Oct 2026
+- fix: config: declare the jev config scope, so Nextflow no longer logs Unrecognized config option for jev.* settings (#2) [ebcaa312]
+- chore: ci: publish to the registry and tag the release when a release commit lands on master [8b26fe12]
+
 0.2.0 - 07 Oct 2026
 - chore: build: read the registry token from an untracked .env file [23cf0840]
 - feat: noul: add noul(instructions, criteria) to spell out what true and false mean (#1) [03dc60e9]

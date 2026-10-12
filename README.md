@@ -35,7 +35,7 @@ Enable the plugin in your pipeline `nextflow.config`:
 
 ```groovy
 plugins {
-    id 'nf-jev@0.2.0'
+    id 'nf-jev@0.2.1'
 }
 ```
 
