@@ -1,0 +1,151 @@
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Build and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # ratchet:actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # ratchet:gradle/actions/setup-gradle@v6
+
+      - name: Build and test
+        run: ./gradlew assemble test
+
+      - name: Upload the test report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # ratchet:actions/upload-artifact@v7
+        with:
+          name: test-report
+          path: build/reports/tests/test
+          retention-days: 7
+
+  examples:
+    name: Examples
+    needs: test
+    runs-on: ubuntu-latest
+    # Secrets are not available to pull requests opened from a fork, so the live examples can only
+    # run for branches of this repository.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    env:
+      NXF_VER: '26.04.6'
+      TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # ratchet:actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # ratchet:gradle/actions/setup-gradle@v6
+
+      - name: Check for a credential
+        id: guard
+        run: |
+          if [ -z "$TYPESAFE_API_KEY" ]; then
+            echo "::notice::TYPESAFE_API_KEY is not configured - skipping the live examples"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install Nextflow
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          curl -s https://get.nextflow.io | bash
+          sudo mv nextflow /usr/local/bin/
+          nextflow -version
+
+      - name: Install the plugin
+        if: steps.guard.outputs.run == 'true'
+        run: make install
+
+      # Each example is asserted on the SHAPE of its output - how many samples were decided - and
+      # never on the probabilities themselves, which move by a hundredth between runs and would
+      # make this suite flaky for no benefit.
+
+      - name: Example - guardrail
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          out=$(nextflow -q run examples/guardrail)
+          echo "$out"
+          n=$(printf '%s' "$out" | grep -oE 'BLOCK|REVIEW|PASS' | wc -l | tr -d ' ')
+          [ "$n" -eq 3 ] || { echo "::error::expected 3 screened reports, got $n"; exit 1; }
+
+      - name: Example - route
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          out=$(nextflow -q run examples/route)
+          echo "$out"
+          n=$(printf '%s' "$out" | grep -oE 'QC on|REJECT' | wc -l | tr -d ' ')
+          [ "$n" -eq 3 ] || { echo "::error::expected 3 routed samples, got $n"; exit 1; }
+
+      - name: Example - label-samples
+        if: steps.guard.outputs.run == 'true'
+        # this one also fetches metadata from the ENA, so a failure here may be their outage
+        run: |
+          out=$(nextflow -q run examples/label-samples)
+          echo "$out"
+          n=$(printf '%s' "$out" | grep -oE 'ACCEPT|REVIEW' | wc -l | tr -d ' ')
+          [ "$n" -eq 6 ] || { echo "::error::expected 6 labelled samples, got $n"; exit 1; }
+
+      - name: Upload the Nextflow log
+        if: failure() && steps.guard.outputs.run == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # ratchet:actions/upload-artifact@v7
+        with:
+          name: nextflow-log
+          path: .nextflow.log
+          retention-days: 7
+
+  release:
+    name: Release
+    needs: [test, examples]
+    runs-on: ubuntu-latest
+    # A `[release] version x.y.z` commit pushed to master publishes the version in build.gradle.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master' && contains(github.event.head_commit.message, '[release]')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # ratchet:actions/checkout@v7
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # ratchet:actions/setup-java@v6
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # ratchet:gradle/actions/setup-gradle@v6
+
+      - name: Read the version
+        id: version
+        run: echo "version=$(./gradlew -q properties | awk '/^version:/ {print $2}')" >> "$GITHUB_OUTPUT"
+
+      # Publishing first: the registry refuses a version it already has, so a re-run cannot
+      # publish twice, and a failure here leaves no tag or release behind.
+      - name: Publish to the Nextflow Registry
+        env:
+          NPR_API_KEY: ${{ secrets.NPR_API_KEY }}
+        run: ./gradlew releasePlugin
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          # the notes are this version's block of changelog.txt
+          awk -v v="$VERSION" '$1 == v && $2 == "-" {on=1; next} on && /^$/ {exit} on' changelog.txt > notes.md
+          cd build/distributions
+          sha512sum "nf-jev-$VERSION.zip" > "nf-jev-$VERSION.zip.sha512"
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "nf-jev $VERSION" --notes-file ../../notes.md \
+            "nf-jev-$VERSION.zip" "nf-jev-$VERSION.zip.sha512"
